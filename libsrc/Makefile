@@ -73,7 +73,7 @@ TESTS=printf file stdlib math longjmp
 
 printf_SRCS:=$(wildcard stdio/*.c)
 file_SRCS:=$(wildcard stdio/*.c)
-stdlib_SRCS:=$(wildcard stdlib/*.c)
+stdlib_SRCS:=$(filter-out stdlib/realpath.c,$(wildcard stdlib/*.c))
 math_SRCS:=$(wildcard math/*.c)
 longjmp_SRCS:=misc/setjmp.c
 
