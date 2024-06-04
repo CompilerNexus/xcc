@@ -37,6 +37,9 @@
 
 //
 
+#if XCC_TARGET_ARCH == XCC_ARCH_X64
+# define USE_SYS_LD
+#endif
 #if XCC_TARGET_PLATFORM == XCC_PLATFORM_APPLE
 // Apple
 #  define USE_SYS_AS

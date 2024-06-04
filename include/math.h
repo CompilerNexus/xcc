@@ -44,24 +44,34 @@ double modf(double x, double *pint);
 double fmod(double x, double m);
 double frexp(double x, int *p);
 
-int isfinite(double x);
+int finite(double x);
 int isnan(double x);
 int isinf(double x);
 
-int signbit(double x);
+inline int signbit(double x) {
+#if defined(__APPLE__)
+  extern int __signbitd(double);
+  return __signbitd(x);
+#else
+  extern int __signbit(double x);
+  return __signbit(x);
+#endif
+}
 double copysign(double x, double f);
+
+inline int isfinite(double x) {
+#if defined(__APPLE__)
+  extern int __isfinited(double);
+  return __isfinited(x);
+#else
+  return finite(x);
+#endif
+}
 
 #if defined(__APPLE__) || defined(__GNUC__) || defined(__aarch64__) || defined(__riscv)
 // isfinite, isinf and isnan is defined by macro and not included in lib file,
 // so it will be link error.
 #include <stdint.h>
-#define isfinite(x)  ({ \
-  const int64_t __mask = ((((int64_t)1 << 11) - 1) << 52); \
-  union { double d; int64_t q; } __u; \
-  __u.d = (x); \
-  (__u.q & __mask) != __mask; \
-})
-
 #define isinf(x)  ({ \
   const int64_t __mask = ((((int64_t)1 << 11) - 1) << 52); \
   const int64_t __mask2 = ((((int64_t)1 << 12) - 1) << 51); \
@@ -75,12 +85,6 @@ double copysign(double x, double f);
   union { double d; int64_t q; } __u; \
   __u.d = (x); \
   (__u.q & __mask2) == __mask2; \
-})
-
-#define signbit(x)  ({ \
-  union { double d; uint64_t q; } __u; \
-  __u.d = (x); \
-  __u.q >> 63; \
 })
 
 #endif
