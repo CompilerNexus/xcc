@@ -147,9 +147,12 @@ static bool is_got(const Name *name) {
 #if XCC_TARGET_PLATFORM == XCC_PLATFORM_APPLE
   // TODO: How to detect the label is GOT?
   return name->bytes >= 5 && strncmp(name->chars, "__std", 5) == 0;  // __stdinp, etc.
-#else
+#elif defined(USE_SYS_LD)
   // TODO: How to detect the label is GOT?
   return name->bytes >= 3 && strncmp(name->chars, "std", 3) == 0;  // stdin, etc.
+#else
+  UNUSED(name);
+  return false;
 #endif
 }
 

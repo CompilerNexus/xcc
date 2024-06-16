@@ -132,7 +132,7 @@ $(foreach D, $(XCC_SRC_DIRS), $(eval $(call DEFINE_OBJ_TARGET,$(D))))
 
 .PHONY: test
 test:	all
-	$(MAKE) -C tests clean && $(MAKE) -C tests all && \
+	$(MAKE) -C tests clean && $(MAKE) NO_LINK_TEST=1 -C tests all && \
 		$(MAKE) test-libs
 
 .PHONY: test-all
