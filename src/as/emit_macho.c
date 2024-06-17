@@ -101,17 +101,194 @@ static int construct_symtab(Symtab *symtab, Table *label_table) {
   return symtab->count;
 }
 
-int emit_macho_obj(const char *ofn, Table *label_table, Vector *unresolved) {
-  UNUSED(unresolved);
+static void construct_relas(Vector *unresolved, Symtab *symtab, Table *label_table,
+                            int rela_counts[], struct relocation_info *rela_bufs[]) {
+UNUSED(label_table);
+  memset(rela_counts, 0x00, sizeof(*rela_counts) * SECTION_COUNT);
+  for (int i = 0; i < unresolved->len; ++i) {
+    UnresolvedInfo *u = unresolved->data[i];
+    assert(u->src_section >= 0 && u->src_section < SECTION_COUNT);
+    ++rela_counts[u->src_section];
+  }
 
+  for (int i = 0; i < SECTION_COUNT; ++i) {
+    int count = rela_counts[i];
+    rela_bufs[i] = count <= 0 ? NULL : calloc_or_die(count * sizeof(*rela_bufs[i]));
+  }
+  memset(rela_counts, 0x00, sizeof(*rela_counts) * SECTION_COUNT);  // Reset count.
+
+  for (int i = 0; i < unresolved->len; ++i) {
+    UnresolvedInfo *u = unresolved->data[i];
+    struct relocation_info *rela = &rela_bufs[u->src_section][rela_counts[u->src_section]++];
+    switch (u->kind) {
+//     case UNRES_EXTERN:
+//     case UNRES_EXTERN_PC32:
+//       {
+//         int symidx = symtab_find(symtab, u->label);
+//         assert(symidx >= 0);
+
+//         rela->r_offset = u->offset;
+//         rela->r_info = ELF64_R_INFO(symidx, u->kind == UNRES_EXTERN_PC32 ? R_X86_64_PC32
+//                                                                          : R_X86_64_PLT32);
+//         rela->r_addend = u->add;
+//       }
+//       break;
+//     case UNRES_OTHER_SECTION:
+//       {
+//         LabelInfo *label = table_get(label_table, u->label);
+//         assert(label != NULL);
+//         int secidx = label->section + 1;
+//         rela->r_offset = u->offset;
+//         rela->r_info = ELF64_R_INFO(secidx, R_X86_64_PC32);
+//         rela->r_addend = u->add;
+//       }
+//       break;
+//     case UNRES_ABS64:
+//       {
+// #if XCC_TARGET_ARCH == XCC_ARCH_RISCV64
+//         const int type = R_RISCV_64;
+// #elif XCC_TARGET_ARCH == XCC_ARCH_AARCH64
+//         const int type = R_AARCH64_ABS64;
+// #else  // #elif XCC_TARGET_ARCH == XCC_ARCH_X64
+//         const int type = R_X86_64_64;
+// #endif
+//         LabelInfo *label = table_get(label_table, u->label);
+//         if (label == NULL || label->flag & (LF_GLOBAL | LF_REFERRED)) {
+//           int symidx = symtab_find(symtab, u->label);
+//           assert(symidx >= 0);
+
+//           rela->r_offset = u->offset;
+//           rela->r_info = ELF64_R_INFO(symidx, type);
+//           rela->r_addend = u->add;
+//         } else {
+//           rela->r_offset = u->offset;
+//           rela->r_info = ELF64_R_INFO(label->section + 1, type);
+//           rela->r_addend = u->add + (label->address - section_start_addresses[label->section]);
+//         }
+//       }
+//       break;
+//     case UNRES_RISCV_BRANCH:
+//     case UNRES_RISCV_RVC_BRANCH:
+//       {
+//         Elf64_Sym *sym = symtab_add(symtab, u->label);
+//         size_t index = sym - symtab->buf;
+
+//         rela->r_offset = u->offset;
+//         rela->r_info = ELF64_R_INFO(index, u->kind == UNRES_RISCV_RVC_BRANCH ? R_RISCV_RVC_BRANCH
+//                                                                              : R_RISCV_BRANCH);
+//         rela->r_addend = u->add;
+//       }
+//       break;
+
+    case UNRES_CALL:
+      {
+        int symidx = symtab_find(symtab, u->label);
+        assert(symidx >= 0);
+
+        rela->r_address = u->offset + u->add;
+        rela->r_symbolnum = symidx;
+        rela->r_pcrel = 1;
+        rela->r_length = 2;
+        rela->r_extern = 1;
+        rela->r_type = ARM64_RELOC_BRANCH26;
+      }
+      break;
+
+//     case UNRES_GOT_HI:
+//     case UNRES_GOT_LO:
+//       {
+//         LabelInfo *label = table_get(label_table, u->label);
+//         int type = u->kind == UNRES_GOT_HI ? R_AARCH64_ADR_GOT_PAGE : R_AARCH64_LD64_GOT_LO12_NC;
+//         if (label == NULL || label->flag & (LF_GLOBAL | LF_REFERRED)) {
+//           int symidx = symtab_find(symtab, u->label);
+//           assert(symidx >= 0);
+
+//           rela->r_offset = u->offset;
+//           rela->r_info = ELF64_R_INFO(symidx, type);
+//           rela->r_addend = u->add;
+//         } else {
+//           rela->r_offset = u->offset;
+//           rela->r_info = ELF64_R_INFO(label->section + 1, type);
+//           rela->r_addend = u->add + (label->address - section_start_addresses[label->section]);
+//         }
+//       }
+//       break;
+
+    case UNRES_PCREL_HI:
+    case UNRES_PCREL_LO:
+      {
+#if XCC_TARGET_ARCH == XCC_ARCH_AARCH64
+        int symidx = symtab_find(symtab, u->label);
+        assert(symidx >= 0);
+
+        rela->r_address = u->offset + u->add;
+        rela->r_symbolnum = symidx;
+        rela->r_pcrel = u->kind == UNRES_PCREL_HI ? 1 : 0;
+        rela->r_length = 2;
+        rela->r_extern = 1;
+        rela->r_type = u->kind == UNRES_PCREL_HI ? ARM64_RELOC_PAGE21 : ARM64_RELOC_PAGEOFF12;
+#else
+        assert(false);
+#endif
+      }
+      break;
+//     case UNRES_RISCV_JAL:
+//     case UNRES_RISCV_RVC_JUMP:
+//       {
+//         int symidx = symtab_find(symtab, u->label);
+//         assert(symidx >= 0);
+
+//         rela->r_offset = u->offset;
+//         rela->r_info = ELF64_R_INFO(symidx, u->kind == UNRES_RISCV_JAL ? R_RISCV_JAL : R_RISCV_RVC_JUMP);
+//         rela->r_addend = u->add;
+//       }
+//       break;
+//     case UNRES_RISCV_RELAX:
+//       {
+//         rela->r_offset = u->offset;
+//         rela->r_info = ELF64_R_INFO(0, R_RISCV_RELAX);
+//         rela->r_addend = u->add;
+//       }
+//       break;
+    default:
+fprintf(stderr, "%d, ", u->kind);
+      assert(false);
+      break;
+    }
+  }
+}
+
+int emit_macho_obj(const char *ofn, Table *label_table, Vector *unresolved) {
   size_t codesz, rodatasz, datasz;
   get_section_size(SEC_CODE, &codesz, NULL);
   get_section_size(SEC_RODATA, &rodatasz, NULL);
   get_section_size(SEC_DATA, &datasz, NULL);
 
+  int section_count = 0;
+  uint64_t code_reloc_off = 0, rodata_reloc_off = 0, data_reloc_off = 0;
+  struct {
+    size_t *psize;
+    uint64_t *poff;
+  } table[] = {
+    {&codesz, &code_reloc_off},
+    {&rodatasz, &rodata_reloc_off},
+    {&datasz, &data_reloc_off},
+  };
+
+  assert(ARRAY_SIZE(table) == SEC_BSS);
+  for (int i = 0; i < SEC_BSS; ++i) {
+    if (*table[i].psize > 0)
+      ++section_count;
+  }
+
   // Construct symtab and strtab.
   Symtab symtab;
   construct_symtab(&symtab, label_table);
+
+  // Construct relas.
+  int rela_counts[SECTION_COUNT];
+  struct relocation_info *rela_bufs[SECTION_COUNT];
+  construct_relas(unresolved, &symtab, label_table, rela_counts, rela_bufs);
 
   FILE *ofp;
   if (ofn == NULL) {
@@ -124,28 +301,20 @@ int emit_macho_obj(const char *ofn, Table *label_table, Vector *unresolved) {
     }
   }
 
-  struct section_64 sections[1];
-
-  uint32_t size_of_cmds = sizeof(struct segment_command_64) + sizeof(sections) + sizeof(struct build_version_command) + sizeof(struct symtab_command);
+  uint32_t size_of_cmds = sizeof(struct segment_command_64) + sizeof(struct section_64) * section_count + sizeof(struct build_version_command) + sizeof(struct symtab_command);
   uint64_t text_start_addr = 0;
   uint64_t text_start_off = sizeof(struct mach_header_64) + size_of_cmds;
-  // uint64_t rodata_start_addr = codesz;
+  uint64_t rodata_start_addr = text_start_addr + codesz;
   uint64_t rodata_start_off = text_start_off + codesz;
-  uint64_t reloc_start_off = rodata_start_off + rodatasz;
-  uint64_t symbol_start_off = reloc_start_off;
+  uint64_t reloc_off_p = rodata_start_off + rodatasz;
+  for (int i = 0; i < SEC_BSS; ++i) {
+    if (rela_counts[i] > 0) {
+      *table[i].poff = reloc_off_p;
+      reloc_off_p += sizeof(struct relocation_info) * rela_counts[i];
+    }
+  }
+  uint64_t symbol_start_off = reloc_off_p;
   uint64_t str_start_off = symbol_start_off + sizeof(*symtab.buf) * symtab.count;
-
-  sections[0] = (struct section_64){
-    .sectname = "__text",
-    .segname = "__TEXT",
-    .addr = text_start_addr,
-    .size = codesz,
-    .offset = text_start_off,
-    .align = 2,  // 2^2
-    .reloff = reloc_start_off,
-    .nreloc = 0,
-    .flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS,
-  };
 
   struct mach_header_64 header = {
     .magic = MH_MAGIC_64,
@@ -165,7 +334,7 @@ int emit_macho_obj(const char *ofn, Table *label_table, Vector *unresolved) {
   };
   struct segment_command_64 segmentcmd = {
     .cmd = LC_SEGMENT_64,
-    .cmdsize = sizeof(segmentcmd) + sizeof(sections),
+    .cmdsize = sizeof(segmentcmd) + sizeof(struct section_64) * section_count,
     .segname = "",
     .vmaddr = 0,
     .vmsize = codesz + rodatasz,
@@ -173,7 +342,7 @@ int emit_macho_obj(const char *ofn, Table *label_table, Vector *unresolved) {
     .filesize = codesz + rodatasz,
     .maxprot = 7,   // rwx
     .initprot = 7,  // rwx
-    .nsects = ARRAY_SIZE(sections),
+    .nsects = section_count,
     .flags = 0,
   };
   struct build_version_command buildversioncmd = {
@@ -195,11 +364,48 @@ int emit_macho_obj(const char *ofn, Table *label_table, Vector *unresolved) {
 
   fwrite(&header, sizeof(header), 1, ofp);
   fwrite(&segmentcmd, sizeof(segmentcmd), 1, ofp);
-  fwrite(&sections, sizeof(sections), 1, ofp);
+  if (codesz > 0) {
+    struct section_64 section = {
+      .sectname = "__text",
+      .segname = "__TEXT",
+      .addr = text_start_addr,
+      .size = codesz,
+      .offset = text_start_off,
+      .align = most_significant_bit(section_aligns[SEC_CODE]),
+      .reloff = code_reloc_off,
+      .nreloc = rela_counts[SEC_CODE],
+      .flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS,
+    };
+    fwrite(&section, sizeof(section), 1, ofp);
+  }
+  if (rodatasz > 0) {
+    struct section_64 section = {
+      .sectname = "__const",
+      .segname = "__DATA",
+      .addr = rodata_start_addr,
+      .size = rodatasz,
+      .offset = rodata_start_off,
+      .align = most_significant_bit(section_aligns[SEC_RODATA]),
+      .reloff = rodata_reloc_off,
+      .nreloc = rela_counts[SEC_RODATA],
+      .flags = 0,
+    };
+    fwrite(&section, sizeof(section), 1, ofp);
+  }
   fwrite(&buildversioncmd, sizeof(buildversioncmd), 1, ofp);
   fwrite(&symtabcmd, sizeof(symtabcmd), 1, ofp);
 
   output_section(ofp, SEC_CODE);
+  if (rodatasz > 0) {
+    output_section(ofp, SEC_RODATA);
+  }
+  if (datasz > 0) {
+    output_section(ofp, SEC_DATA);
+  }
+  for (int i = 0; i < SEC_BSS; ++i) {
+    if (rela_counts[i] > 0)
+      fwrite(rela_bufs[i], sizeof(*rela_bufs[i]), rela_counts[i], ofp);
+  }
   fwrite(symtab.buf, sizeof(*symtab.buf), symtab.count, ofp);
   fwrite(strtab_dump(&symtab.strtab), symtab.strtab.size, 1, ofp);
 
