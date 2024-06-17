@@ -148,6 +148,7 @@ typedef struct {
   int flag;
   uintptr_t address;
   enum LabelKind kind;
+  int align;
 } LabelInfo;
 
-LabelInfo *add_label_table(Table *label_table, const Name *label, int section, bool define, bool global);
+LabelInfo *add_label_table(Table *label_table, const Name *label, int section, bool define, bool global, int align);

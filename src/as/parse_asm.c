@@ -42,16 +42,17 @@ static const char *kDirectiveTable[] = {
 #endif
 };
 
-static LabelInfo *new_label(int section, uintptr_t address) {
+static LabelInfo *new_label(int section, int align) {
   LabelInfo *info = malloc_or_die(sizeof(*info));
   info->section = section;
   info->flag = 0;
-  info->address = address;
+  info->address = 0;
   info->kind = LK_NONE;
+  info->align = align;
   return info;
 }
 
-LabelInfo *add_label_table(Table *label_table, const Name *label, int section, bool define, bool global) {
+LabelInfo *add_label_table(Table *label_table, const Name *label, int section, bool define, bool global, int align) {
   LabelInfo *info = table_get(label_table, label);
   if (info != NULL) {
     if (define) {
@@ -61,9 +62,10 @@ LabelInfo *add_label_table(Table *label_table, const Name *label, int section, b
       }
       info->address = 1;
       info->section = section;
+      info->align = align;
     }
   } else {
-    info = new_label(section, 0);
+    info = new_label(section, align);
     table_put(label_table, label, info);
   }
   if (define)
@@ -838,10 +840,20 @@ void handle_directive(ParseInfo *info, enum DirectiveType dir, Vector **section_
       int64_t align = 0;
       if (*info->p == ',') {
         info->p = skip_whitespaces(info->p + 1);
-        if (!immediate(&info->p, &align) || align < 1) {
+        if (!immediate(&info->p, &align) ||
+#if XCC_TARGET_PLATFORM == XCC_PLATFORM_APPLE
+            align < 0
+#else
+            align < 1
+#endif
+        ) {
           parse_error(info, ".comm: optional alignment expected");
           return;
         }
+#if XCC_TARGET_PLATFORM == XCC_PLATFORM_APPLE
+        // p2align on macOS.
+        align = 1 << align;
+#endif
       }
 
       enum SectionType sec = SEC_BSS;
@@ -851,7 +863,7 @@ void handle_directive(ParseInfo *info, enum DirectiveType dir, Vector **section_
       vec_push(irs, new_ir_label(label));
       vec_push(irs, new_ir_bss(count));
 
-      if (!add_label_table(label_table, label, sec, true, false))
+      if (!add_label_table(label_table, label, sec, true, false, align))
         return;
     }
     break;
@@ -903,7 +915,7 @@ void handle_directive(ParseInfo *info, enum DirectiveType dir, Vector **section_
         break;
       }
 
-      LabelInfo *info = add_label_table(label_table, label, current_section, false, false);
+      LabelInfo *info = add_label_table(label_table, label, current_section, false, false, 0);
       if (info != NULL) {
         info->kind = kind;
       }
@@ -987,7 +999,7 @@ void handle_directive(ParseInfo *info, enum DirectiveType dir, Vector **section_
         return;
       }
 
-      if (!add_label_table(label_table, label, current_section, false, dir == DT_GLOBL))
+      if (!add_label_table(label_table, label, current_section, false, dir == DT_GLOBL, 0))
         err = true;
     }
     break;
