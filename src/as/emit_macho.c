@@ -183,25 +183,22 @@ UNUSED(label_table);
       }
       break;
 
-//     case UNRES_GOT_HI:
-//     case UNRES_GOT_LO:
-//       {
-//         LabelInfo *label = table_get(label_table, u->label);
-//         int type = u->kind == UNRES_GOT_HI ? R_AARCH64_ADR_GOT_PAGE : R_AARCH64_LD64_GOT_LO12_NC;
-//         if (label == NULL || label->flag & (LF_GLOBAL | LF_REFERRED)) {
-//           int symidx = symtab_find(symtab, u->label);
-//           assert(symidx >= 0);
+    case UNRES_GOT_HI:
+    case UNRES_GOT_LO:
+      {
+        LabelInfo *label = table_get(label_table, u->label);
+assert(label != NULL);
+        int symidx = symtab_find(symtab, u->label);
+        assert(symidx >= 0);
 
-//           rela->r_offset = u->offset;
-//           rela->r_info = ELF64_R_INFO(symidx, type);
-//           rela->r_addend = u->add;
-//         } else {
-//           rela->r_offset = u->offset;
-//           rela->r_info = ELF64_R_INFO(label->section + 1, type);
-//           rela->r_addend = u->add + (label->address - section_start_addresses[label->section]);
-//         }
-//       }
-//       break;
+        rela->r_address = u->offset + u->add;
+        rela->r_symbolnum = symidx;
+        rela->r_pcrel = u->kind == UNRES_GOT_HI ? 1 : 0;
+        rela->r_length = 2;
+        rela->r_extern = 1;
+        rela->r_type = u->kind == UNRES_GOT_HI ? ARM64_RELOC_GOT_LOAD_PAGE21 : ARM64_RELOC_GOT_LOAD_PAGEOFF12;
+      }
+      break;
 
     case UNRES_PCREL_HI:
     case UNRES_PCREL_LO:

@@ -215,6 +215,98 @@ static enum CondType find_cond(const char **pp) {
   return NOCOND;
 }
 
+#if XCC_TARGET_PLATFORM == XCC_PLATFORM_APPLE
+static int parse_label_postfix(ParseInfo *info) {
+  static struct {
+    const char *name;
+    int flag;
+  } const kPostfixes[] = {
+    {"@page", LF_PAGE},
+    {"@pageoff", LF_PAGEOFF},
+# if XCC_TARGET_PLATFORM == XCC_PLATFORM_APPLE
+    {"@gotpage", LF_PAGE | LF_GOT},
+    {"@gotpageoff", LF_PAGEOFF | LF_GOT},
+# endif
+  };
+  const char *p = info->p;
+  for (size_t i = 0; i < ARRAY_SIZE(kPostfixes); ++i) {
+    const char *name = kPostfixes[i].name;
+    size_t n = strlen(name);
+    if (strncasecmp(p, name, n) == 0 && !is_label_chr(p[n])) {
+      info->p = p + n;
+      return kPostfixes[i].flag;
+    }
+  }
+  return 0;
+}
+
+#else
+static int find_aarch_label_flag(const char **pp) {
+  static struct {
+    const char *name;
+    int flag;
+  } const kPrefixes[] = {
+    {":lo12:", LF_PAGEOFF},
+    {":got:", LF_GOT},
+    {":got_lo12:", LF_GOT | LF_PAGEOFF},
+  };
+
+  const char *p = *pp;
+  for (size_t i = 0; i < ARRAY_SIZE(kPrefixes); ++i) {
+    const char *name = kPrefixes[i].name;
+    size_t n = strlen(name);
+    if (strncasecmp(p, name, n) == 0) {
+      *pp = p + n;
+      return kPrefixes[i].flag;
+    }
+  }
+  return 0;
+}
+#endif
+
+// Expr *parse_got_label(ParseInfo *info) {
+// #if XCC_TARGET_PLATFORM == XCC_PLATFORM_APPLE
+//   return parse_expr(info);
+// #else
+//   const char *p = info->p;
+//   int flag = find_aarch_label_flag(&p);
+//   if (flag != 0) {
+//     parse_set_p(info, p);
+//     const Token *tok;
+//     if ((tok = match(info, TK_LABEL)) != NULL) {
+//       Expr *offset = new_expr(EX_LABEL);
+//       offset->label.name = tok->label.name;
+//       offset->label.flag = flag;
+//       return offset;
+//     }
+//   }
+// #endif
+//   return NULL;
+// }
+
+static ExprWithFlag parse_expr_with_flag(ParseInfo *info) {
+  // expr = label + nn
+#if XCC_TARGET_PLATFORM == XCC_PLATFORM_APPLE
+  // expr@page
+  // expr@pageoff
+  // expr@gotpage
+  // expr@gotpageoff
+  Expr *expr = parse_expr(info);
+  int flag = parse_label_postfix(info);
+#else
+  // expr
+  // :lo12:expr
+  // :got:expr
+  // :got_lo12:expr
+  const char *p = info->p;
+  int flag = find_aarch_label_flag(&p);
+  if (flag != 0)
+    parse_set_p(info, p);
+  Expr *expr = parse_expr(info);
+#endif
+  return (ExprWithFlag){expr, flag};
+}
+
 static unsigned int parse_indirect_register(ParseInfo *info, Operand *operand) {
   const char *p = skip_whitespaces(info->p);
   enum RegType reg2 = NOREG;
@@ -234,7 +326,8 @@ static unsigned int parse_indirect_register(ParseInfo *info, Operand *operand) {
     parse_error(info, "Base register expected");
   }
 
-  Expr *offset = NULL, *scale = NULL;
+  ExprWithFlag offset_with_flag = {NULL, 0};
+  Expr *scale = NULL;
   int prepost = 0;
   p = skip_whitespaces(p);
   if (*p == ',') {
@@ -243,12 +336,12 @@ static unsigned int parse_indirect_register(ParseInfo *info, Operand *operand) {
       ++p;
       int64_t imm;
       if (immediate(&p, &imm)) {
-        offset = new_expr(EX_FIXNUM);
-        offset->fixnum = imm;
+        offset_with_flag.expr = new_expr(EX_FIXNUM);
+        offset_with_flag.expr->fixnum = imm;
       } else {
         parse_set_p(info, p);
-        offset = parse_got_label(info);
-        if (offset != NULL) {
+        offset_with_flag = parse_expr_with_flag(info);
+        if (offset_with_flag.expr != NULL) {
           p = info->p;
         } else {
           parse_error(info, "Offset expected");
@@ -296,7 +389,7 @@ static unsigned int parse_indirect_register(ParseInfo *info, Operand *operand) {
 
   p = skip_whitespaces(p + 1);
   if (reg2 == NOREG) {
-    if (offset != NULL) {
+    if (offset_with_flag.expr != NULL) {
       if (*p == '!') {
         prepost = 1;
         ++p;
@@ -307,8 +400,8 @@ static unsigned int parse_indirect_register(ParseInfo *info, Operand *operand) {
         p = q + 1;
         int64_t imm;
         if (immediate(&p, &imm)) {
-          offset = new_expr(EX_FIXNUM);
-          offset->fixnum = imm;
+          offset_with_flag.expr = new_expr(EX_FIXNUM);
+          offset_with_flag.expr->fixnum = imm;
           prepost = 2;
         } else {
           // parse_error(info, "Offset expected");
@@ -318,7 +411,7 @@ static unsigned int parse_indirect_register(ParseInfo *info, Operand *operand) {
     }
 
     operand->type = INDIRECT;
-    operand->indirect.offset = offset;
+    operand->indirect.offset = offset_with_flag;
     operand->indirect.prepost = prepost;
     parse_set_p(info, p);
     return IND;
@@ -334,7 +427,7 @@ static unsigned int parse_indirect_register(ParseInfo *info, Operand *operand) {
       operand->register_offset.index_reg.no = reg2 - W0;
     }
     operand->register_offset.extend = extend;
-    operand->register_offset.scale = scale;
+    operand->register_offset.scale = scale;;
     parse_set_p(info, p);
     return ROI;
   }
@@ -468,8 +561,8 @@ unsigned int parse_operand(ParseInfo *info, unsigned int opr_flag, Operand *oper
   }
 
   if (opr_flag & EXP) {
-    Expr *expr = parse_expr(info);
-    if (expr != NULL) {
+    ExprWithFlag expr = parse_expr_with_flag(info);
+    if (expr.expr != NULL) {
       operand->type = DIRECT;
       operand->direct.expr = expr;
       return EXP;
